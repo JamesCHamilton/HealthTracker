@@ -1,0 +1,13 @@
+{
+  "tasks": {
+    "dev": "deno run --watch main.ts"
+  },
+  "imports": {
+    "nodeModulesDir": "true",
+    "@std/assert": "jsr:@std/assert@1",
+    "express": "npm:express@^4.21.2"
+  },
+    "scripts": {
+      "dev": "deno run --allow-net main.ts"
+    }
+}
