@@ -5,10 +5,11 @@ import { verifyToken, generateToken } from "../jwtMiddleware.ts";
 import Client from "../schemas/Client.ts";
 import bcryptjs from "npm:bcryptjs";
 import { isMongoError } from "../utils/MongoErrorChecker.ts";
+import ProgressLog from "../schemas/ProgressLog.ts"
 
 const router = express.Router();
 
-// Create new client (Deno compatible)
+// Create new client
 router.post("/", async (req: Request, res: Response) => {
     try {
         const { firstName, lastName, email, password } = req.body;
@@ -18,8 +19,10 @@ router.post("/", async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Password must be at least 8 characters" });
         }
 
+        //hashs password for DB
         const hashedPassword = await bcryptjs.hash(password, 10);
 
+        //Creates client object 
         const client = new Client({
             firstName,
             lastName,
@@ -27,6 +30,7 @@ router.post("/", async (req: Request, res: Response) => {
             password: hashedPassword
         });
 
+        //saves client object
         await client.save();
 
         // Remove sensitive data from response
@@ -34,9 +38,11 @@ router.post("/", async (req: Request, res: Response) => {
         delete clientData.password;
 
         res.status(201).json({ message: "Client created successfully", client: clientData });
+
     } catch (error) {
         console.error("Registration error:", error);
 
+        //checks if there is a duplcaite field already in the DB
         if (isMongoError(error)) {
             if (error.code === 11000) {
                 const duplicateField = Object.keys(error.keyValue)[0];
@@ -55,7 +61,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 });
 
-// Login route (Deno compatible)
+// Login route
 router.post('/login', async (req: Request, res: Response) => {
     try {
         const { email, password } = req.body;
@@ -65,11 +71,13 @@ router.post('/login', async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Email and password required" });
         }
 
+        //tries to find client that matches the email
         const client = await Client.findOne({ email }).select("+password");
         if (!client) {
             return res.status(404).json({ error: "User not found" });
         }
 
+        //if client is found, checks to see if the password matches
         const passwordValid = await bcryptjs.compare(password, client.password);
         if (!passwordValid) {
             return res.status(401).json({ error: "Invalid credentials" });
@@ -101,15 +109,17 @@ router.post('/login', async (req: Request, res: Response) => {
         });
 
     } catch (error) {
+        
         console.error("Login error:", error);
         res.status(500).json({ error: "Internal server error" });
     }
 });
 
+//client updates log
 router.post('/logs', verifyToken, async (req: Request, res: Response) => {
     try {
         const clientId = req.user?._id;
-        const { weight, strengthProgress } = req.body;
+        const { weight, strengthProgress, notes } = req.body;
 
         // Validate required fields
         if (!weight || !strengthProgress?.length) {
@@ -118,15 +128,18 @@ router.post('/logs', verifyToken, async (req: Request, res: Response) => {
             });
         }
 
+        //creates a new log to update in the DB
         const newLog = {
             date: new Date(),
             weight: Number(weight),
             strengthProgress: strengthProgress.map((sp: { exercise: string; maxWeight: number }) => ({
                 exercise: sp.exercise,
                 maxWeight: Number(sp.maxWeight)
-            }))
+            })),
+            notes
         };
 
+        //creates a new log for the client 
         const updatedClient = await Client.findByIdAndUpdate(
             clientId,
             { $push: { progressLogs: newLog } },
@@ -146,6 +159,7 @@ router.post('/logs', verifyToken, async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Log error:", error);
         
+        //checks if you are the rightful user 
         if (isMongoError(error) && error.name === 'ValidationError') {
             const messages = Object.values(error.errors as { [key: string]: { message?: string } }).map((err: { message?: string }) => err.message);
             return res.status(400).json({ errors: messages });
@@ -155,6 +169,7 @@ router.post('/logs', verifyToken, async (req: Request, res: Response) => {
     }
 });
 
+//adding a goal
 router.put('/goals', verifyToken, async (req: Request, res: Response) => {
     try {
         const clientId = req.user?._id;
@@ -165,12 +180,14 @@ router.put('/goals', verifyToken, async (req: Request, res: Response) => {
             return res.status(400).json({ error: "No goals provided" });
         }
 
+        //updates whatever goal they want to update
         const updates: Record<string, number> = {};
         if (calories) updates['targetGoals.calories'] = Number(calories);
         if (protein) updates['targetGoals.macros.protein'] = Number(protein);
         if (carbs) updates['targetGoals.macros.carbs'] = Number(carbs);
         if (fats) updates['targetGoals.macros.fats'] = Number(fats);
 
+        //creates the updated Client
         const updatedClient = await Client.findByIdAndUpdate(
             clientId,
             { $set: updates },
@@ -189,11 +206,13 @@ router.put('/goals', verifyToken, async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Goals error:", error);
         
+        //checks if the user is the correct one
         if (isMongoError(error)) {
             if (error.name === 'ValidationError') {
                 const messages = Object.values(error.errors as { [key: string]: { message?: string } }).map((err: { message?: string }) => err.message);
                 return res.status(400).json({ errors: messages });
             }
+            //If the user tries to "update" the goal with the same goal they already have
             if (error.code === 11000) {
                 return res.status(409).json({ error: "Conflict in goal settings" });
             }
@@ -203,7 +222,7 @@ router.put('/goals', verifyToken, async (req: Request, res: Response) => {
     }
 });
 
-// Add to your existing routes
+// Finds a client profile
 router.get('/profile', verifyToken, async (req: Request, res: Response) => {
     try {
         // Get client ID from verified token
@@ -241,3 +260,22 @@ router.get('/profile', verifyToken, async (req: Request, res: Response) => {
         res.status(500).json({ error: "Failed to retrieve profile" });
     }
 });
+
+//gets the logs for the Client 
+router.get('/logs', verifyToken, async (req: Request, res: Response) => {
+    try{
+        //tries to get the logs for the Client when they login 
+        const logs = await ProgressLog.find({client: req.user?._id})
+        .sort("-date")
+        .limit(30);
+
+        res.json({
+            count: logs.length,
+            logs
+        });
+
+    }catch(error){
+        console.log(error)
+        res.status(500).json({error: "Failed to retrieve logs"})
+    }
+})
