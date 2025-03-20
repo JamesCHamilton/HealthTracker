@@ -302,6 +302,7 @@ router.get("/logs", verifyToken, async (req: Request, res: Response) => {
   }
 });
 
+//sees if the user has verified their email
 router.get("/verify-email", async (req: Request, res: Response) => {
   try {
     const { token } = req.query;

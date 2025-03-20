@@ -1,11 +1,11 @@
 import { create, verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
-import {NextFunction, Request, Response} from "express";
+import { NextFunction, Request, Response } from "express";
 import { User } from "./interfaces/MiddlewareUser.ts";
 import { JwtUserPayload } from "./interfaces/jwtUserPayload.ts";
 
 declare module "express" {
   interface Request {
-    user?: JwtUserPayload;  // Use the custom payload type
+    user?: JwtUserPayload; // Use the custom payload type
   }
 }
 
@@ -15,7 +15,7 @@ const SECRET_JWT = await crypto.subtle.importKey(
   new TextEncoder().encode(Deno.env.get("SECRET_JWT") || ""),
   { name: "HMAC", hash: "SHA-256" },
   false,
-  ["sign", "verify"]
+  ["sign", "verify"],
 );
 
 const generateToken = async (user: User) => {
@@ -24,9 +24,9 @@ const generateToken = async (user: User) => {
     {
       _id: user._id.toString(),
       ...user._doc,
-      exp: Math.floor(Date.now() / 1000) + (5 * 60 * 60) // 5 hours expiration
+      exp: Math.floor(Date.now() / 1000) + (5 * 60 * 60), // 5 hours expiration
     },
-    SECRET_JWT // Directly pass CryptoKey as 3rd argument
+    SECRET_JWT, // Directly pass CryptoKey as 3rd argument
   );
 };
 
@@ -36,9 +36,9 @@ const generateAuthToken = async (user: User) => {
     {
       _id: user._id.toString(),
       ...user._doc,
-      exp: Math.floor(Date.now() / 1000) + (10 * 60) // 10 minutes expiration
+      exp: Math.floor(Date.now() / 1000) + (10 * 60), // 10 minutes expiration
     },
-    SECRET_JWT // Directly pass CryptoKey
+    SECRET_JWT, // Directly pass CryptoKey
   );
 };
 
@@ -57,7 +57,11 @@ const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
   }
 };
 
-const verifyResetToken = async (req: Request, res: Response, next: NextFunction) => {
+const verifyResetToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   const token = req.body?.token;
   if (!token) {
     return res.status(401).json({ message: "No reset token found" });
@@ -72,4 +76,4 @@ const verifyResetToken = async (req: Request, res: Response, next: NextFunction)
   }
 };
 
-export { generateToken, verifyToken, generateAuthToken, verifyResetToken };
+export { generateAuthToken, generateToken, verifyResetToken, verifyToken };
