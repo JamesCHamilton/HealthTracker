@@ -3,6 +3,7 @@ import express, {Response } from "express";
 import mongoose from "npm:mongoose@^6.7";
 import cors from "npm:cors";
 import cookieParser from "npm:cookie-parser";
+import {router as ClientRouter} from "./routes/clients.ts";
 
 const app = express();
 const mongoConnectString = Deno.env.get("MONGO_URL")! //mongoString
@@ -26,6 +27,8 @@ const corsOptions = {
 app.use(cors(corsOptions)); //using cors for stopping non auth access
 app.use(cookieParser());
 app.use(express.json());
+
+app.use("/clients", ClientRouter);
 
 //start listening to the port
 const PORT = Deno.env.get("PORT");
