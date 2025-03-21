@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import Link from "next/link";
 import { useRouter } from "next/compat/router";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import axios from "axios";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -15,13 +15,15 @@ import * as z from "zod";
 const formSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
-  email: z.string().email("Invalid email address"),
+  email: z.string().regex(
+    /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+    "Invalid email address",
+  ),
   password: z.string().min(8, "Password must be at least 8 characters"),
   confirmPassword: z.string(),
-  terms: z.boolean().refine(
-    (val) => val,
-    "You must accept the terms and conditions",
-  ),
+  terms: z.literal<boolean>(true, {
+    errorMap: () => ({ message: "You must accept the terms and conditions" }),
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords do not match",
   path: ["confirmPassword"],
@@ -33,6 +35,7 @@ type FormValues = z.infer<typeof formSchema>;
 export default function SignUpPage() {
   const router = useRouter();
   const {
+    control,
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
@@ -58,7 +61,12 @@ export default function SignUpPage() {
           email: data.email,
           password: data.password,
         },
-        { withCredentials: true },
+        {
+          withCredentials: true,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
       );
 
       if (response.status === 201) {
@@ -68,7 +76,13 @@ export default function SignUpPage() {
       }
     } catch (error) {
       console.error("Registration failed:", error);
-      // Handle API errors here (e.g., display error message)
+      if (axios.isAxiosError(error)) {
+        console.error("Frontend Error Details:", {
+          status: error.response?.status,
+          data: error.response?.data,
+          headers: error.response?.headers
+        });
+      }
     }
   };
 
@@ -159,9 +173,16 @@ export default function SignUpPage() {
               </div>
 
               <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="terms"
-                  {...register("terms")}
+                <Controller
+                  name="terms"
+                  control={control}
+                  render={({ field }) => (
+                    <Checkbox
+                      id="terms"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
                 />
                 <label
                   htmlFor="terms"

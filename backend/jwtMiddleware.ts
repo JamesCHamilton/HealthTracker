@@ -2,7 +2,9 @@ import { create, verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 import { NextFunction, Request, Response } from "express";
 import { User } from "./interfaces/MiddlewareUser.ts";
 import { JwtUserPayload } from "./interfaces/jwtUserPayload.ts";
-
+import { crypto } from "https://deno.land/std@0.224.0/crypto/mod.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+config({export: true})
 declare module "express" {
   interface Request {
     user?: JwtUserPayload; // Use the custom payload type
@@ -16,7 +18,7 @@ const SECRET_JWT = await crypto.subtle.importKey(
   { name: "HMAC", hash: "SHA-256" },
   false,
   ["sign", "verify"],
-);
+); 
 
 const generateToken = async (user: User) => {
   return await create(

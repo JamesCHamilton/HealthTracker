@@ -43,7 +43,7 @@ export default function SignInPage() {
   const onSubmit = async (data: FormValues) => {
     try {
       const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_SERVER}/auth/login`,
+        `${process.env.NEXT_PUBLIC_SERVER}/clients/login`,
         data,
         { withCredentials: true },
       );

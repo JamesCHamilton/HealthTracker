@@ -1,5 +1,7 @@
 import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts";
 import { ClientObj } from "../interfaces/ClientObj.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+config({export: true})
 
 export async function sendWelcomeEmail(client: ClientObj) {
   const Smtpclient = new SmtpClient();

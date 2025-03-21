@@ -1,5 +1,5 @@
 // schemas/ProgressLog.ts
-import mongoose from "mongoose";
+import mongoose from "npm:mongoose@^6.7";
 
 const progressLogSchema = new mongoose.Schema({
   client: {

@@ -7,7 +7,9 @@ import bcryptjs from "npm:bcryptjs";
 import { isMongoError } from "../utils/MongoErrorChecker.ts";
 import ProgressLog from "../schemas/ProgressLog.ts";
 import { sendWelcomeEmail } from "../utils/Emailer.ts";
-import { cyrpto } from "$std/crypto/mod.ts";
+import { crypto } from "https://deno.land/std@0.224.0/crypto/mod.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+config({ export: true });
 
 const router = express.Router();
 
@@ -15,21 +17,16 @@ const router = express.Router();
 router.post("/", async (req: Request, res: Response) => {
   try {
     const { firstName, lastName, email, password } = req.body;
+    
 
-    // Validate password length
-    if (password.length < 8) {
-      return res.status(400).json({
-        error: "Password must be at least 8 characters",
-      });
-    }
-
-    //hashs password for DB
+    // Hash password
     const hashedPassword = await bcryptjs.hash(password, 10);
 
-    const verificationToken = cyrpto.randomUUID();
-    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
+    // Generate verification token
+    const verificationToken = crypto.randomUUID();
+    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-    //Creates client object
+    // Create and save client
     const client = new Client({
       firstName,
       lastName,
@@ -39,20 +36,27 @@ router.post("/", async (req: Request, res: Response) => {
       verificationExpires,
     });
 
-    //saves client object
     await client.save();
 
-    sendWelcomeEmail({
-      email: client.email,
-      firstName: client.firstName,
-      verificationToken: client.verificationToken,
-    });
+    // Send email (wrap in try-catch)
+    try {
+      await sendWelcomeEmail({
+        email: client.email,
+        firstName: client.firstName,
+        verificationToken: client.verificationToken,
+      });
+    } catch (emailError) {
+      console.error("Email sending failed:", emailError);
+      // Don't fail the request, just log the error
+    }
 
-    // Remove sensitive data from response
+    // Sanitize response
     const clientData = client.toObject();
     delete clientData.password;
+    delete clientData.verificationToken;
+    delete clientData.verificationExpires;
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Client created successfully",
       client: clientData,
     });
@@ -257,7 +261,7 @@ router.get("/profile", verifyToken, async (req: Request, res: Response) => {
       .select("-password")
       .lean();
 
-    if (!client) {
+    if (!client || Array.isArray(client)) {
       return res.status(404).json({ error: "Client not found" });
     }
 

@@ -1,8 +1,10 @@
 import Client from "../schemas/Client.ts";
 import { Router } from "express";
 import { Request, Response } from "express";
-import { getGoogleAuthUrl, handleGoogleCallback } from "..utils/googleAuth.ts";
+import { getGoogleAuthUrl, handleGoogleCallback } from "../utils/googleAuth.ts";
 import { generateToken } from "../jwtMiddleware.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+config({export: true})
 
 const router = Router();
 

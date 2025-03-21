@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose from "npm:mongoose@^6.7";
 
 const clientSchema = new mongoose.Schema({
   firstName: {
@@ -13,7 +13,6 @@ const clientSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    match: [/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/, 'Invalid email']
   },
   password: {
     type: String,

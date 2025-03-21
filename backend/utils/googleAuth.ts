@@ -1,4 +1,6 @@
 import { OAuth2Client } from "https://deno.land/x/oauth2_client@v1.0.3/mod.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+config({export: true})
 
 const oauth2Client = new OAuth2Client({
   clientId: Deno.env.get("GOOGLE_CLIENT_ID")!,
