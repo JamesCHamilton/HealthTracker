@@ -1,50 +1,58 @@
 // @ts-types="npm:express@^4.21.2"
 import express, { Response } from "express";
-import mongoose from "mongoose";
+import { MongoClient } from "https://deno.land/x/mongo@v0.32.0/mod.ts";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { router as ClientRouter } from "./routes/clients.ts";
 import { router as GoogleAuthRouter } from "./routes/auth.ts";
 import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+
 config({ export: true });
 
 const app = express();
-const mongoConnectString = Deno.env.get("MONGO_URL")!; //mongoString
+const mongoConnectString = Deno.env.get("MONGO_URL")!;
 
-//api connection test
+// Database connection setup
+const client = new MongoClient();
+let db: ReturnType<MongoClient["database"]>;
+
+const connectDB = async () => {
+  try {
+    console.log("Connecting to MongoDB...");
+    await client.connect(mongoConnectString);
+    db = client.database("your-database-name"); // Replace with your DB name
+    console.log("MongoDB connected!");
+  } catch (error) {
+    console.log("DB connection error:", (error as Error).message);
+    Deno.exit(1);
+  }
+};
+
+// API connection test
 app.get("/", (res: Response) => {
   res.send("Welcome to the Dinosaur API!");
 });
 
-console.log(mongoConnectString);
-
-await mongoose
-  .connect(mongoConnectString)
-  .then(() => console.log("DB connected!"))
-  .catch((error) => console.log("DB connection error:", error.message));
-
-mongoose.connection.on("connecting", () => console.log("Connecting to MongoDB..."));
-mongoose.connection.on("connected", () => console.log("MongoDB connected!"));
-mongoose.connection.on("disconnected", () => console.log("MongoDB disconnected!"));
-
+// Database connection
+await connectDB(); // Wait for connection before proceeding
 
 const corsOptions = {
-  origin: "http://localhost:3000", // Allow requests from this origin
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE", // Allowed HTTP methods
-  credentials: true, // Enable cookies and authentication headers
+  origin: "http://localhost:3000",
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
 };
 
-app.use(cors(corsOptions)); //using cors for stopping non auth access
+app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
 
-app.use("/clients", ClientRouter); //client routes
-app.use("/auth", GoogleAuthRouter); //google auth routes
+// Pass database to routes (modify your routes to accept db)
+app.use("/clients", ClientRouter(db!));
+app.use("/auth", GoogleAuthRouter(db!));
 
-//start listening to the port
-const PORT = Deno.env.get("PORT");
-
+// Start server
+const PORT = Deno.env.get("PORT") || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

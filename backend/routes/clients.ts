@@ -1,335 +1,327 @@
 // @deno-types="npm:@types/express@4.17.15"
 import express from "npm:express";
 import { Request, Response } from "npm:express";
+import type { ClientDocument } from "../Database.ts";
 import { generateToken, verifyToken } from "../jwtMiddleware.ts";
-import Client from "../schemas/Client.ts";
+import { baseSchema } from "../schemas/Client.ts";
+import {
+  type ProgressLogData,
+  ProgressLogSchema,
+} from "../schemas/ProgressLog.ts";
 import bcryptjs from "npm:bcryptjs";
-import { isMongoError } from "../utils/MongoErrorChecker.ts";
-import ProgressLog from "../schemas/ProgressLog.ts";
+import { Database, ObjectId } from "https://deno.land/x/mongo@v0.32.0/mod.ts";
 import { sendWelcomeEmail } from "../utils/Emailer.ts";
 import { crypto } from "https://deno.land/std@0.224.0/crypto/mod.ts";
 import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+
 config({ export: true });
 
-const router = express.Router();
-
-// Create new client
-router.post("/", async (req: Request, res: Response) => {
-  try {
-    const { firstName, lastName, email, password } = req.body;
-    
-
-    // Hash password
-    const hashedPassword = await bcryptjs.hash(password, 10);
-
-    // Generate verification token
-    const verificationToken = crypto.randomUUID();
-    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-    // Create and save client
-    const client = new Client({
-      firstName,
-      lastName,
-      email,
-      password: hashedPassword,
-      verificationToken,
-      verificationExpires,
-    });
-
-    await client.save();
-
-    // Send email (wrap in try-catch)
+export const router = (db: Database) => {
+  const router = express.Router();
+  const clientsCollection = db.collection<ClientDocument>("clients");
+  const progressLogsCollection = db.collection<ProgressLogData>("progressLogs");
+  // Create new client route
+  router.post("/", async (req: Request, res: Response) => {
     try {
-      await sendWelcomeEmail({
-        email: client.email,
-        firstName: client.firstName,
-        verificationToken: client.verificationToken,
-      });
-    } catch (emailError) {
-      console.error("Email sending failed:", emailError);
-      // Don't fail the request, just log the error
-    }
+      const { firstName, lastName, email, password } = req.body;
 
-    // Sanitize response
-    const clientData = client.toObject();
-    delete clientData.password;
-    delete clientData.verificationToken;
-    delete clientData.verificationExpires;
-
-    return res.status(201).json({
-      message: "Client created successfully",
-      client: clientData,
-    });
-  } catch (error) {
-    console.error("Registration error:", error);
-
-    //checks if there is a duplcaite field already in the DB
-    if (isMongoError(error)) {
-      if (error.code === 11000) {
-        const duplicateField = Object.keys(error.keyValue)[0];
-        return res.status(409).json({
-          error: `${duplicateField} already exists`,
+      // Validate input with required password check
+      const parsedData = baseSchema
+        .required({ password: true })
+        .partial({
+          verificationToken: true,
+          verificationExpires: true,
+          emailVerified: true,
+          logs: true,
+        })
+        .refine(
+          (data) => data.authMethod === "local" ? !!data.password : true,
+          {
+            message: "Password is required for local authentication",
+            path: ["password"],
+          },
+        )
+        .parse({
+          firstName,
+          lastName,
+          email,
+          password,
+          verificationToken: crypto.randomUUID(),
+          verificationExpires: new Date(Date.now() + 60 * 60 * 1000),
         });
+      // Check for existing user
+      const existingClient = await clientsCollection.findOne({ email });
+      if (existingClient) {
+        return res.status(409).json({ error: "Email already exists" });
       }
-      // Add explicit type check for ValidationError
-      if (
-        "errors" in error && typeof error.errors === "object" &&
-        error.errors !== null
-      ) {
-        const messages = Object.values(error.errors).map((
-          err: { message?: string },
-        ) => err.message ? err.message : "Validation error");
-        return res.status(400).json({ errors: messages });
-      }
-    }
 
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+      // Hash password (now guaranteed to exist)
+      const hashedPassword = await bcryptjs.hash(parsedData.password, 10);
 
-// Login route
-router.post("/login", async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
+      // Create insert document with explicit password
+      const insertDoc = {
+        ...parsedData,
+        password: hashedPassword,
+        emailVerified: parsedData.emailVerified ?? false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
 
-    // Validate input
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
-    }
+      // Insert new client
+      const insertId = await clientsCollection.insertOne(insertDoc);
 
-    //tries to find client that matches the email
-    const client = await Client.findOne({ email }).select("+password");
-    if (!client) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    //if client is found, checks to see if the password matches
-    const passwordValid = await bcryptjs.compare(password, client.password);
-    if (!passwordValid) {
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-
-    // Generate JWT token
-    const token = await generateToken(client);
-
-    // Configure secure cookies for Deno
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: Deno.env.get("DENO_ENV") === "production",
-      sameSite: "strict",
-      maxAge: 5 * 60 * 60 * 1000, // 5 hours
-      path: "/",
-    });
-
-    // Return user data without sensitive information
-    const userData = {
-      id: client._id,
-      firstName: client.firstName,
-      lastName: client.lastName,
-      email: client.email,
-    };
-
-    res.status(200).json({
-      message: "Login successful",
-      user: userData,
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-//client updates log
-router.post("/logs", verifyToken, async (req: Request, res: Response) => {
-  try {
-    const clientId = req.user?._id;
-    const { weight, strengthProgress, notes } = req.body;
-
-    // Validate required fields
-    if (!weight || !strengthProgress?.length) {
-      return res.status(400).json({
-        error: "Weight and at least one strength measurement required",
+      // Get the created client using correct insertResult property
+      const newClient = await clientsCollection.findOne({
+        _id: insertId,
       });
-    }
 
-    //creates a new log to update in the DB
-    const newLog = {
-      date: new Date(),
-      weight: Number(weight),
-      strengthProgress: strengthProgress.map((
-        sp: { exercise: string; maxWeight: number },
-      ) => ({
-        exercise: sp.exercise,
-        maxWeight: Number(sp.maxWeight),
-      })),
-      notes,
-    };
-
-    //creates a new log for the client
-    const updatedClient = await Client.findByIdAndUpdate(
-      clientId,
-      { $push: { progressLogs: newLog } },
-      { new: true, select: "-password" },
-    );
-
-    if (!updatedClient) {
-      return res.status(404).json({ error: "Client not found" });
-    }
-
-    res.status(201).json({
-      message: "Log added successfully",
-      newLog,
-      totalLogs: updatedClient.progressLogs.length,
-    });
-  } catch (error) {
-    console.error("Log error:", error);
-
-    //checks if you are the rightful user
-    if (isMongoError(error) && error.name === "ValidationError") {
-      const messages = Object.values(
-        error.errors as { [key: string]: { message?: string } },
-      ).map((err: { message?: string }) => err.message);
-      return res.status(400).json({ errors: messages });
-    }
-
-    res.status(500).json({ error: "Failed to add log" });
-  }
-});
-
-//adding a goal
-router.put("/goals", verifyToken, async (req: Request, res: Response) => {
-  try {
-    const clientId = req.user?._id;
-    const { calories, protein, carbs, fats } = req.body;
-
-    // Validate at least one goal is provided
-    if (!calories && !protein && !carbs && !fats) {
-      return res.status(400).json({ error: "No goals provided" });
-    }
-
-    //updates whatever goal they want to update
-    const updates: Record<string, number> = {};
-    if (calories) updates["targetGoals.calories"] = Number(calories);
-    if (protein) updates["targetGoals.macros.protein"] = Number(protein);
-    if (carbs) updates["targetGoals.macros.carbs"] = Number(carbs);
-    if (fats) updates["targetGoals.macros.fats"] = Number(fats);
-
-    //creates the updated Client
-    const updatedClient = await Client.findByIdAndUpdate(
-      clientId,
-      { $set: updates },
-      { new: true, runValidators: true, select: "-password" },
-    );
-
-    if (!updatedClient) {
-      return res.status(404).json({ error: "Client not found" });
-    }
-
-    res.status(200).json({
-      message: "Goals updated successfully",
-      goals: updatedClient.targetGoals,
-    });
-  } catch (error) {
-    console.error("Goals error:", error);
-
-    //checks if the user is the correct one
-    if (isMongoError(error)) {
-      if (error.name === "ValidationError") {
-        const messages = Object.values(
-          error.errors as { [key: string]: { message?: string } },
-        ).map((err: { message?: string }) => err.message);
-        return res.status(400).json({ errors: messages });
+      // Send verification email
+      try {
+        await sendWelcomeEmail({
+          email: newClient!.email,
+          firstName: newClient!.firstName,
+          verificationToken: newClient!.verificationToken!,
+        });
+      } catch (emailError) {
+        console.error("Email sending failed:", emailError);
       }
-      //If the user tries to "update" the goal with the same goal they already have
-      if (error.code === 11000) {
-        return res.status(409).json({ error: "Conflict in goal settings" });
+
+      // Sanitize response
+      const {
+        password: _,
+        verificationToken: _verificationToken,
+        verificationExpires: _verificationExpires,
+        ...clientData
+      } = newClient!;
+
+      return res.status(201).json({
+        message: "Client created successfully",
+        client: clientData,
+      });
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Login route
+  router.post("/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required" });
       }
-    }
 
-    res.status(500).json({ error: "Failed to update goals" });
-  }
-});
+      const client = await clientsCollection.findOne({ email });
+      if (!client) {
+        return res.status(404).json({ error: "User not found" });
+      }
 
-// Finds a client profile
-router.get("/profile", verifyToken, async (req: Request, res: Response) => {
-  try {
-    // Get client ID from verified token
-    const clientId = req.user?._id;
+      const passwordValid = client.password
+        ? await bcryptjs.compare(password, client.password)
+        : false;
+      if (!passwordValid) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
 
-    // Find client excluding password
-    const client = await Client.findById(clientId)
-      .select("-password")
-      .lean();
-
-    if (!client || Array.isArray(client)) {
-      return res.status(404).json({ error: "Client not found" });
-    }
-
-    res.status(200).json({
-      message: "Profile retrieved successfully",
-      profile: {
-        _id: client._id,
+      const token = await generateToken({
+        _id: client._id!.toString(),
+        email: client.email,
         firstName: client.firstName,
         lastName: client.lastName,
-        email: client.email,
-        targetGoals: client.targetGoals,
-        workoutSchedule: client.workoutSchedule,
-        progressLogs: client.progressLogs,
-      },
-    });
-  } catch (error) {
-    console.error("Profile error:", error);
+      });
 
-    if (isMongoError(error)) {
-      return res.status(400).json({ error: "Invalid client ID format" });
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: Deno.env.get("DENO_ENV") === "production",
+        sameSite: "strict",
+        maxAge: 5 * 60 * 60 * 1000,
+        path: "/",
+      });
+
+      const { password: _, ...userData } = client;
+      res.status(200).json({
+        message: "Login successful",
+        user: userData,
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
+  });
 
-    res.status(500).json({ error: "Failed to retrieve profile" });
-  }
-});
+  // Client updates log
+  router.post("/logs", verifyToken, async (req: Request, res: Response) => {
+    try {
+      const clientId = new ObjectId(req.user?._id);
+      const { weight, strengthProgress, notes } = req.body;
 
-//gets the logs for the Client
-router.get("/logs", verifyToken, async (req: Request, res: Response) => {
-  try {
-    //tries to get the logs for the Client when they login
-    const logs = await ProgressLog.find({ client: req.user?._id })
-      .sort("-date")
-      .limit(30);
+      if (!weight || !strengthProgress?.length) {
+        return res.status(400).json({
+          error: "Weight and at least one strength measurement required",
+        });
+      }
 
-    res.json({
-      count: logs.length,
-      logs,
-    });
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({ error: "Failed to retrieve logs" });
-  }
-});
+      const logData = ProgressLogSchema.parse({
+        client: clientId,
+        weight: Number(weight),
+        strengthProgress: strengthProgress.map((
+          sp: { exercise: string; maxWeight: number; reps?: number },
+        ) => ({
+          exercise: sp.exercise,
+          maxWeight: Number(sp.maxWeight),
+          reps: sp.reps ? Number(sp.reps) : undefined,
+        })),
+        notes,
+      });
 
-//sees if the user has verified their email
-router.get("/verify-email", async (req: Request, res: Response) => {
-  try {
-    const { token } = req.query;
+      const insertResult = await progressLogsCollection.insertOne(logData) as {
+        insertedId: ObjectId;
+      };
 
-    const client = await Client.findOne({
-      verificationToken: token,
-      verificationExpires: { $gt: new Date() },
-    });
+      await clientsCollection.updateOne(
+        { _id: clientId },
+        { $push: { logs: insertResult.insertedId } },
+      );
 
-    if (!client) {
-      return res.status(400).json({ error: "Invalid or expired token" });
+      res.status(201).json({
+        message: "Log added successfully",
+        newLog: { ...logData, _id: insertResult.insertedId },
+      });
+    } catch (error) {
+      console.error("Log error:", error);
+      res.status(500).json({ error: "Failed to add log" });
     }
+  });
 
-    client.emailVerified = true;
-    client.verifricationToken = undefined;
-    client.verificationExpires = undefined;
-    await client.save();
+  // Update goals
+  router.put("/goals", verifyToken, async (req: Request, res: Response) => {
+    try {
+      const clientId = new ObjectId(req.user?._id);
+      const { calories, protein, carbs, fats } = req.body;
 
-    res.json({ message: "Email has been verified successfully" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to vaerify email" });
-  }
-});
+      if (!calories && !protein && !carbs && !fats) {
+        return res.status(400).json({ error: "No goals provided" });
+      }
 
-export { router };
+      const updates: {
+        targetGoals?: {
+          calories?: number;
+          macros?: { protein?: number; carbs?: number; fats?: number };
+        };
+      } = {};
+      if (calories) {
+        updates.targetGoals = {
+          ...updates.targetGoals,
+          calories: Number(calories),
+        };
+      }
+      if (protein || carbs || fats) {
+        updates.targetGoals = {
+          ...updates.targetGoals,
+          macros: {
+            ...updates.targetGoals?.macros,
+            ...(protein && { protein: Number(protein) }),
+            ...(carbs && { carbs: Number(carbs) }),
+            ...(fats && { fats: Number(fats) }),
+          },
+        };
+      }
+
+      const result = await clientsCollection.updateOne(
+        { _id: clientId },
+        { $set: updates },
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      const updatedClient = await clientsCollection.findOne({ _id: clientId });
+      res.status(200).json({
+        message: "Goals updated successfully",
+        goals: updatedClient?.targetGoals,
+      });
+    } catch (error) {
+      console.error("Goals error:", error);
+      res.status(500).json({ error: "Failed to update goals" });
+    }
+  });
+
+  // Get profile
+  router.get("/profile", verifyToken, async (req: Request, res: Response) => {
+    try {
+      const clientId = new ObjectId(req.user?._id);
+      const client = await clientsCollection.findOne(
+        { _id: clientId },
+        { projection: { password: 0 } },
+      );
+
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      res.status(200).json({
+        message: "Profile retrieved successfully",
+        profile: client,
+      });
+    } catch (error) {
+      console.error("Profile error:", error);
+      res.status(500).json({ error: "Failed to retrieve profile" });
+    }
+  });
+
+  // Get logs
+  router.get("/logs", verifyToken, async (req: Request, res: Response) => {
+    try {
+      const logs = await progressLogsCollection.find({
+        client: new ObjectId(req.user?._id),
+      })
+        .sort({ date: -1 })
+        .limit(30)
+        .toArray();
+
+      res.json({
+        count: logs.length,
+        logs,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to retrieve logs" });
+    }
+  });
+
+  // Verify email
+  router.get("/verify-email", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.query;
+      const client = await clientsCollection.findOne({
+        verificationToken: token as string,
+        verificationExpires: { $gt: new Date() },
+      });
+
+      if (!client) {
+        return res.status(400).json({ error: "Invalid or expired token" });
+      }
+
+      await clientsCollection.updateOne(
+        { _id: client._id },
+        {
+          $set: { emailVerified: true },
+          $unset: {
+            verificationToken: undefined,
+            verificationExpires: undefined,
+          },
+        },
+      );
+
+      res.json({ message: "Email has been verified successfully" });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to verify email" });
+    }
+  });
+
+  return router;
+};

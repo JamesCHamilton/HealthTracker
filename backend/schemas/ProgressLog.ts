@@ -1,44 +1,41 @@
 // schemas/ProgressLog.ts
-import mongoose from "npm:mongoose@^6.7";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { ObjectId } from "https://deno.land/x/mongo@v0.32.0/mod.ts";
 
-const progressLogSchema = new mongoose.Schema({
-  client: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Client",
-    required: true
-  },
-  date: {
-    type: Date,
-    default: Date.now,
-    required: true
-  },
-  weight: {
-    type: Number,
-    min: 0,
-    required: true
-  },
-  strengthProgress: [{
-    exercise: {
-      type: String,
-      required: true
-    },
-    maxWeight: {
-      type: Number,
-      min: 0,
-      required: true
-    },
-    reps: {
-      type: Number,
-      min: 0
-    }
-  }],
-  notes: {
-    type: String,
-    maxlength: 500
-  }
-}, {
-  timestamps: true
+// TypeScript Interface
+export interface ProgressLog {
+  _id?: ObjectId;
+  client: ObjectId;
+  date: Date;
+  weight: number;
+  strengthProgress: StrengthProgress[];
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface StrengthProgress {
+  exercise: string;
+  maxWeight: number;
+  reps?: number;
+}
+
+// Zod Validation Schema
+export const ProgressLogSchema = z.object({
+  client: z.instanceof(ObjectId).or(z.string().transform(v => new ObjectId(v))),
+  date: z.date().default(() => new Date()),
+  weight: z.number().min(0),
+  strengthProgress: z.array(
+    z.object({
+      exercise: z.string().min(1),
+      maxWeight: z.number().min(0),
+      reps: z.number().min(0).optional(),
+    })
+  ),
+  notes: z.string().max(500).optional(),
+  createdAt: z.date().default(() => new Date()),
+  updatedAt: z.date().default(() => new Date()),
 });
 
-const ProgressLog = mongoose.models?.ProgressLog || mongoose.model("ProgressLog", progressLogSchema);
-export default ProgressLog;
+// Helper type for validated data
+export type ProgressLogData = z.infer<typeof ProgressLogSchema>;
