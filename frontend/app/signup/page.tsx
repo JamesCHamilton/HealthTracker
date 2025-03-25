@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import Link from "next/link";
-import { useRouter } from "next/compat/router";
+import { useRouter } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 import axios from "axios";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -70,10 +70,8 @@ export default function SignUpPage() {
       );
 
       if (response.status === 201) {
-        if (router) {
           router.push("/dashboard");
         }
-      }
     } catch (error) {
       console.error("Registration failed:", error);
       if (axios.isAxiosError(error)) {

@@ -7,10 +7,10 @@ export const baseSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: z.string().email(),
-  password: z.string().min(8).optional(),
+  password: z.string().min(8).optional(), //optional for Google auth
   emailVerified: z.boolean().default(false),
-  googleId: z.string().optional(),
-  authMethod: z.enum(["local", "google"]).default("local"),
+  googleId: z.string().optional(), //would be filled in if using Google auth
+  authMethod: z.enum(["local", "google"]).default("local"), //normal or google auth
   verificationToken: z.string().optional(),
   verificationExpires: z.date().optional(),
   targetGoals: z.object({
@@ -40,6 +40,7 @@ export const baseSchema = z.object({
 });
 
 // Refined schema with validation
+//if user is logining in with local auth, password must be provided
 export const ClientSchema = baseSchema.refine(
   (data) => data.authMethod === "local" ? !!data.password : true,
   {
@@ -48,6 +49,8 @@ export const ClientSchema = baseSchema.refine(
   }
 );
 
+// Schema for creating a new client
+// Omitting _id, createdAt, and updatedAt for creation
 export const ClientCreateSchema = baseSchema.omit({ 
   _id: true, 
   createdAt: true, 

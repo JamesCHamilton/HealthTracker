@@ -27,7 +27,7 @@ export const router = (db: Database) => {
 
       // Validate input with required password check
       const parsedData = baseSchema
-        .required({ password: true })
+        .required({ password: true }) //since not google auth
         .partial({
           verificationToken: true,
           verificationExpires: true,
@@ -55,7 +55,7 @@ export const router = (db: Database) => {
         return res.status(409).json({ error: "Email already exists" });
       }
 
-      // Hash password (now guaranteed to exist)
+      // Hash password for safer storage
       const hashedPassword = await bcryptjs.hash(parsedData.password, 10);
 
       // Create insert document with explicit password
@@ -196,16 +196,18 @@ export const router = (db: Database) => {
   });
 
   // Update goals
-  router.put("/goals", verifyToken, async (req: Request, res: Response) => {
+  router.put("/updatePersonalData", verifyToken, async (req: Request, res: Response) => {
     try {
       const clientId = new ObjectId(req.user?._id);
-      const { calories, protein, carbs, fats } = req.body;
+      const { firstName, lastName, calories, protein, carbs, fats } = req.body;
 
-      if (!calories && !protein && !carbs && !fats) {
-        return res.status(400).json({ error: "No goals provided" });
+      if (!calories && !protein && !carbs && !fats && !firstName && !lastName) {
+        return res.status(400).json({ error: "No data provided" });
       }
 
       const updates: {
+        firstName?: string;
+        lastName?: string;
         targetGoals?: {
           calories?: number;
           macros?: { protein?: number; carbs?: number; fats?: number };
@@ -229,6 +231,11 @@ export const router = (db: Database) => {
         };
       }
 
+      if (firstName || lastName) {
+        updates.firstName = firstName;
+        updates.lastName = lastName;
+      }
+
       const result = await clientsCollection.updateOne(
         { _id: clientId },
         { $set: updates },
@@ -241,7 +248,7 @@ export const router = (db: Database) => {
       const updatedClient = await clientsCollection.findOne({ _id: clientId });
       res.status(200).json({
         message: "Goals updated successfully",
-        goals: updatedClient?.targetGoals,
+        updatedData: updatedClient?.targetGoals,
       });
     } catch (error) {
       console.error("Goals error:", error);
@@ -310,7 +317,7 @@ export const router = (db: Database) => {
         {
           $set: { emailVerified: true },
           $unset: {
-            verificationToken: undefined,
+            verificationToken: "",
             verificationExpires: undefined,
           },
         },
